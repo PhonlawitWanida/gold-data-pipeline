@@ -1,0 +1,10 @@
+# ไม่เอาไฟล์ข้อมูลและโฟลเดอร์ของ Airflow ขึ้น Git
+data_lake/**/*.json
+data_lake/**/*.csv
+data_lake/**/*.parquet
+logs/
+plugins/
+__pycache__/
+
+# ไม่เอาไฟล์รหัสผ่านและ Environment ขึ้น Git
+.env
