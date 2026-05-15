@@ -87,6 +87,90 @@ def check_data_quality():
     print("✅ Data Quality Check Passed: ข้อมูลถูกต้อง ครบถ้วน พร้อมนำไปใช้งานต่อ")
 
 # ==========================================
+# 4. ฟังก์ชันสรุปผลข้อมูลธุรกิจ (Gold Layer) - 🌟 เพิ่มใหม่
+# ==========================================
+def transform_silver_to_gold():
+    silver_path = "/opt/airflow/data_lake/silver/gold_prices_silver.csv"
+    
+    if not os.path.isfile(silver_path):
+        raise Exception("Gold Layer Error: ไม่พบไฟล์ Silver Layer")
+    
+    # 1. อ่านข้อมูลที่ผ่านการ Clean และ DQ Check มาแล้ว
+    df = pd.read_csv(silver_path)
+    
+    # 2. สร้างคอลัมน์ 'date' โดยตัดเวลาทิ้ง เพื่อใช้จัดกลุ่ม (Group By) เป็นรายวัน
+    df['date'] = pd.to_datetime(df['timestamp']).dt.date
+    
+    # 3. คำนวณสถิติทางธุรกิจ (Business Metrics) สำหรับการเทรดวิเคราะห์
+    gold_summary = df.groupby('date').agg(
+        avg_price=('price', 'mean'),             # ราคาเฉลี่ยของวัน
+        max_price=('price', 'max'),              # ราคาสูงสุดของวัน (Resistance)
+        min_price=('price', 'min'),              # ราคาต่ำสุดของวัน (Support)
+        volatility_spread=('price', lambda x: x.max() - x.min()), # ความผันผวน (ส่วนต่างจุดสูงสุด-ต่ำสุด)
+        data_points=('price', 'count')           # จำนวนครั้งที่ดึงข้อมูลในวันนั้น
+    ).reset_index()
+    
+    # 4. สร้าง Moving Average (MA) 3 วัน เพื่อดูเทรนด์ระยะสั้น
+    gold_summary['moving_avg_3d'] = gold_summary['avg_price'].rolling(window=3, min_periods=1).mean()
+    
+    # ปัดเศษทศนิยมให้ดูสวยงาม (2 ตำแหน่งตามมาตรฐานค่าเงิน)
+    gold_summary = gold_summary.round(2)
+    
+    # 5. กำหนดที่เซฟไฟล์ใน Gold Layer
+    gold_path = "/opt/airflow/data_lake/gold/gold_daily_summary.csv"
+    os.makedirs(os.path.dirname(gold_path), exist_ok=True)
+    
+    # 💡 ทริค: ในชั้น Gold เรามักจะ "เขียนทับ (Overwrite)" ไฟล์เดิมเสมอ 
+    # เพื่อให้ Dashboard ได้ตารางสรุปผลที่อัปเดตล่าสุดไปใช้แบบบรรทัดไม่ซ้ำซ้อน
+    gold_summary.to_csv(gold_path, index=False, mode='w')
+    
+    print(f"Gold Layer: สร้างตารางสรุปผลรายวันสำเร็จที่ {gold_path}")
+    print(gold_summary.tail(3)) # ปริ้นท์ 3 วันล่าสุดให้ดูใน Log
+
+# ==========================================
+# ตั้งค่า DAG และร้อยเรียง Task
+# ==========================================
+default_args = {
+    'owner': 'data_engineer',
+    'depends_on_past': False,
+    'start_date': datetime(2026, 5, 14),
+    'retries': 1,
+    'retry_delay': timedelta(minutes=2),
+}
+
+with DAG(
+    'gold_price_pipeline',
+    default_args=default_args,
+    description='End-to-End Gold Price Pipeline (Medallion Architecture)',
+    schedule_interval='@hourly',
+    catchup=False,
+    tags=['gold_pipeline'],
+) as dag:
+
+    task_bronze = PythonOperator(
+        task_id='extract_gold_api_to_bronze',
+        python_callable=fetch_gold_data
+    )
+
+    task_silver = PythonOperator(
+        task_id='transform_bronze_to_silver',
+        python_callable=transform_bronze_to_silver
+    )
+
+    task_dq_check = PythonOperator(
+        task_id='data_quality_check',
+        python_callable=check_data_quality
+    )
+    
+    task_gold = PythonOperator(
+        task_id='transform_silver_to_gold',
+        python_callable=transform_silver_to_gold
+    )
+
+    # 🌟 ผูก Master Pipeline (Data Lineage) 🌟
+    task_bronze >> task_silver >> task_dq_check >> task_gold
+    
+# ==========================================
 # ตั้งค่า DAG และร้อยเรียง Task
 # ==========================================
 default_args = {
