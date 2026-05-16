@@ -29,6 +29,7 @@
 
 **Data Flow Pipeline:**
 > `Landing Zone (Raw CSV)` ➔ `Bronze Layer (Backup)` ➔ `Silver Layer (Cleaned & DQ Checked)` ➔ `Gold Layer (Star Schema in SQLite)`
+<img width="1205" height="192" alt="Screenshot 2026-05-16 091628" src="https://github.com/user-attachments/assets/40faaae1-68e5-4dba-af30-9b0d88bc5e8c" />
 
 ## 4. โครงสร้างของโปรเจกต์ (Project Directory)
 ```text
@@ -90,6 +91,8 @@ FROM fact_gold_prices f
 JOIN dim_date d ON f.date_key = d.date_key
 GROUP BY d.year, d.month;
 ```
+<img width="659" height="521" alt="Screenshot 2026-05-16 082709" src="https://github.com/user-attachments/assets/380b177e-6668-4e3d-bf8a-8688961db9b9" />
+
 บทสรุปและ Insight เชิงธุรกิจ:
 
 ภาพรวมรายเดือน: สามารถติดตามเทรนด์ราคาขาขึ้นหรือขาลงได้จากการดึงค่าราคาเฉลี่ยในแต่ละเดือนมาเปรียบเทียบกัน
