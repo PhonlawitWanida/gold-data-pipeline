@@ -33,7 +33,7 @@
 
 **Data Architecture Pipeline**
 
-<img width="3477" height="7407" alt="Gold Data Transformation-2026-05-16-030435" src="https://github.com/user-attachments/assets/05bdcd43-73d7-49cd-8285-2f5508946415" />
+<img width="1000" height="2500" alt="Gold Data Transformation-2026-05-16-030435" src="https://github.com/user-attachments/assets/05bdcd43-73d7-49cd-8285-2f5508946415" />
 
 ## 4. โครงสร้างของโปรเจกต์ (Project Directory)
 ```text
@@ -68,7 +68,7 @@ gold-price-pipeline/
 * **Fact Table (`fact_gold_prices`):** ตารางหลักที่ใช้เก็บข้อมูลเชิงตัวเลข (Metrics) ได้แก่ `price`, `high_price`, `low_price` และ `currency`
 * **Dimension Table (`dim_date`):** ตารางมิติเวลาที่แตกข้อมูลวันที่ออกเป็น `date_key`, `day`, `month` และ `year` สำหรับใช้จัดกลุ่ม (Grouping) หรือกรองข้อมูล (Filtering)
 
-<img width="2275" height="2970" alt="Gold Data Transformation-2026-05-16-042514" src="https://github.com/user-attachments/assets/a1419c09-dc76-48a7-9a3c-8855cc962df0" />
+<img width="500" height="600" alt="Gold Data Transformation-2026-05-16-042514" src="https://github.com/user-attachments/assets/a1419c09-dc76-48a7-9a3c-8855cc962df0" />
 
 ## 7. ตัวอย่างการนำข้อมูลไปวิเคราะห์ (Data Analytics & Insights)
 ตัวอย่างคำสั่ง SQL ที่ใช้ดึง Insight จาก Data Warehouse สู่การวิเคราะห์เชิงลึก:
