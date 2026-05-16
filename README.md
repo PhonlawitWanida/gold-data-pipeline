@@ -68,34 +68,48 @@ gold-price-pipeline/
 * **Fact Table (`fact_gold_prices`):** ตารางหลักที่ใช้เก็บข้อมูลเชิงตัวเลข (Metrics) ได้แก่ `price`, `high_price`, `low_price` และ `currency`
 * **Dimension Table (`dim_date`):** ตารางมิติเวลาที่แตกข้อมูลวันที่ออกเป็น `date_key`, `day`, `month` และ `year` สำหรับใช้จัดกลุ่ม (Grouping) หรือกรองข้อมูล (Filtering)
 
+<img width="2275" height="2970" alt="Gold Data Transformation-2026-05-16-042514" src="https://github.com/user-attachments/assets/a1419c09-dc76-48a7-9a3c-8855cc962df0" />
+
 ## 7. ตัวอย่างการนำข้อมูลไปวิเคราะห์ (Data Analytics & Insights)
 ตัวอย่างคำสั่ง SQL ที่ใช้ดึง Insight จาก Data Warehouse สู่การวิเคราะห์เชิงลึก:
 
-* **Query 1: หาสถิติราคาทองคำเฉลี่ยรายเดือน**
+* **Query 1: ภาพรวมการเติบโตและความผันผวนรายเดือน (Monthly Performance & Volatility)**
 ```sql
+WITH MonthlyStats AS (
+    SELECT 
+        d.year, 
+        d.month, 
+        ROUND(AVG(f.price), 2) AS avg_price,
+        ROUND(MAX(f.high) - MIN(f.low), 2) AS volatility
+    FROM fact_gold_prices f
+    JOIN dim_date d ON f.date_key = d.date_key
+    GROUP BY d.year, d.month
+)
 SELECT 
-    d.year, 
-    d.month, 
-    ROUND(AVG(f.price), 2) AS avg_monthly_price
-FROM fact_gold_prices f
-JOIN dim_date d ON f.date_key = d.date_key
-GROUP BY d.year, d.month
-ORDER BY d.year DESC, d.month DESC;
+    year, 
+    month, 
+    avg_price,
+    volatility,
+    ROUND(((avg_price - LAG(avg_price) OVER (ORDER BY year, month)) / 
+           LAG(avg_price) OVER (ORDER BY year, month)) * 100, 2) AS mom_growth_percent
+FROM MonthlyStats
+ORDER BY year DESC, month DESC;
 ```
+<img width="852" height="505" alt="Screenshot 2026-05-16 111919" src="https://github.com/user-attachments/assets/51ce98cc-793f-47cb-8817-b42c185040d5" />
 
-* **Query 2: วิเคราะห์ความผันผวน (Volatility) ประจำเดือน**
+* **Query 2: ตรวจจับวันที่ราคาสวิงตัวรุนแรงที่สุด (Top 5 Max Daily Price Swings)**
 ```SQL
 SELECT 
-    d.year, 
-    d.month,
-    MAX(f.high) AS highest_price,
-    MIN(f.low) AS lowest_price,
-    ROUND(MAX(f.high) - MIN(f.low), 2) AS monthly_volatility
+    d.full_date,
+    f.high AS highest_price,
+    f.low AS lowest_price,
+    ROUND(f.high - f.low, 2) AS daily_price_swing
 FROM fact_gold_prices f
 JOIN dim_date d ON f.date_key = d.date_key
-GROUP BY d.year, d.month;
+ORDER BY daily_price_swing DESC
+LIMIT 5;
 ```
-<img width="659" height="521" alt="Screenshot 2026-05-16 082709" src="https://github.com/user-attachments/assets/380b177e-6668-4e3d-bf8a-8688961db9b9" />
+<img width="724" height="221" alt="Screenshot 2026-05-16 111927" src="https://github.com/user-attachments/assets/b30fad98-3166-4e18-9706-cc8a65d23b0c" />
 
 บทสรุปและ Insight เชิงธุรกิจ:
 
@@ -104,6 +118,8 @@ GROUP BY d.year, d.month;
 การเฝ้าระวังความเสี่ยง: ค่าความผันผวน (Volatility) ช่วยสะท้อนสภาวะตลาด หากความห่างระหว่างราคาสูงสุดและต่ำสุดในเดือนนั้นมีค่ามาก แสดงถึงสภาวะที่นักลงทุนมีความตื่นตระหนกสูง
 
 โครงสร้างที่เอื้อต่อการวิเคราะห์: การมีตารางมิติเวลา (dim_date) แยกออกมา ทำให้ฝ่าย Data Analyst สามารถวิเคราะห์ข้อมูลเปรียบเทียบข้ามปี (YoY) หรือข้ามเดือน (MoM) ได้ทันที
+
+การแยกมิติข้อมูล (Grain Separation): การแยกตาราง Daily Swing (Query 2) ออกมา ทำให้เห็นเหตุการณ์ระดับ Micro ได้ชัดเจนขึ้น ซึ่งเป็นประโยชน์ต่อนักลงทุนระยะสั้น (Day Trader) ในการประเมินความเสี่ยงรายวัน
 
 ## 8. วิธีการใช้งานและการติดตั้ง (Installation & Execution)
 * **เตรียมข้อมูล:** นำไฟล์ Dataset ต้นฉบับไปวางไว้ในโฟลเดอร์ `data_lake/landing/raw_gold_dataset.csv`
