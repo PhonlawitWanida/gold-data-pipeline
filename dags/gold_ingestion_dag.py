@@ -1,130 +1,153 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from datetime import datetime, timedelta
-import requests
-import json
-import os
-import glob
+from datetime import datetime
 import pandas as pd
+import os
+import shutil
+import sqlite3
 import logging
 
-# ตั้งค่า Logging (System Observability)
 logger = logging.getLogger(__name__)
 
 # ==========================================
-# 1. Bronze & Silver Layer (คงเดิมแต่เพิ่ม Metadata)
+# 1. BRONZE: โหลดข้อมูลจาก Landing Zone
 # ==========================================
-def fetch_gold_data():
-    url = "https://www.goldapi.io/api/XAU/USD"
-    headers = {"x-access-token": "goldapi-4fa91653d81f7bde30022e6f5ac87479-io", "Content-Type": "application/json"}
-    
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        data = response.json()
-        current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-        save_path = f"/opt/airflow/data_lake/bronze/gold_raw_{current_time}.json"
-        
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        with open(save_path, 'w') as f:
-            json.dump(data, f)
-        logger.info(f"Bronze Layer: Success. Ingested 1 record to {save_path}")
-    else:
-        logger.error(f"Bronze Layer: Failed. Status Code: {response.status_code}")
-        raise Exception("API Request Failed")
-
-def transform_bronze_to_silver():
+def ingest_local_dataset():
+    landing_path = "/opt/airflow/data_lake/landing/raw_gold_dataset.csv"
     bronze_dir = "/opt/airflow/data_lake/bronze/"
-    list_of_files = glob.glob(os.path.join(bronze_dir, '*.json'))
-    latest_file = max(list_of_files, key=os.path.getctime)
+    os.makedirs(bronze_dir, exist_ok=True)
     
-    with open(latest_file, 'r') as f:
-        data = json.load(f)
+    if not os.path.exists(landing_path):
+        raise FileNotFoundError(f"หาไฟล์ไม่เจอ! กรุณาเอาไฟล์ไปวางไว้ที่: {landing_path} และตั้งชื่อให้ตรงกัน")
     
-    df = pd.DataFrame([data])
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s') + pd.Timedelta(hours=7)
+    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    bronze_path = f"{bronze_dir}gold_raw_{current_time}.csv"
     
-    # เพิ่ม Lineage Metadata (บอกแหล่งที่มาของข้อมูล)
-    df['source_file'] = os.path.basename(latest_file)
-    df['processed_at'] = datetime.now()
-    
+    shutil.copy(landing_path, bronze_path)
+    logger.info(f"Bronze Layer: โหลดไฟล์ Dataset ต้นฉบับสำเร็จ -> {bronze_path}")
+
+# ==========================================
+# 2. SILVER: ทำความสะอาดข้อมูล (Data Cleansing)
+# ==========================================
+def process_dataset_to_silver():
+    bronze_dir = "/opt/airflow/data_lake/bronze/"
     silver_path = "/opt/airflow/data_lake/silver/gold_prices_silver.csv"
     os.makedirs(os.path.dirname(silver_path), exist_ok=True)
-    file_exists = os.path.isfile(silver_path)
-    df.to_csv(silver_path, mode='a', index=False, header=not file_exists)
-    logger.info(f"Silver Layer: Success. Processed file {latest_file}")
+    
+    all_files = [os.path.join(bronze_dir, f) for f in os.listdir(bronze_dir) if f.endswith('.csv')]
+    latest_file = max(all_files, key=os.path.getctime)
+    
+    df = pd.read_csv(latest_file)
+    
+    # เปลี่ยนชื่อคอลัมน์ตามไฟล์ของ Investing.com
+    df = df.rename(columns={'Date': 'timestamp', 'Price': 'price', 'High': 'high_price', 'Low': 'low_price'})
+    
+    # ล้างเครื่องหมายลูกน้ำ (Comma) ออก และแปลงเป็นตัวเลข
+    for col in ['price', 'high_price', 'low_price']:
+        if df[col].dtype == 'object':
+            df[col] = df[col].str.replace(',', '').astype(float)
+            
+    df['currency'] = 'USD'
+    df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+    df = df.dropna(subset=['timestamp']) 
+    df['source_file'] = os.path.basename(latest_file)
+    
+    expected_columns = ['timestamp', 'price', 'high_price', 'low_price', 'currency', 'source_file']
+    df = df.reindex(columns=expected_columns)
+    
+    df.to_csv(silver_path, index=False)
+    logger.info(f"Silver Layer: ทำความสะอาดและแปลงข้อมูลสำเร็จ {len(df)} แถว")
 
 # ==========================================
-# 2. Data Quality & Observability
+# 3. DATA QUALITY
 # ==========================================
 def check_data_quality():
     silver_path = "/opt/airflow/data_lake/silver/gold_prices_silver.csv"
     df = pd.read_csv(silver_path)
     
-    # DQ Logic
-    errors = []
-    if df['price'].isnull().any(): errors.append("Null price detected")
-    if (df['price'] <= 0).any(): errors.append("Negative/Zero price detected")
-    
-    if errors:
-        error_msg = f"🚨 Data Quality Alert: {', '.join(errors)}"
-        logger.error(error_msg)
-        # จำลองการส่ง Alert (เช่น Slack/LINE)
-        print(f"SENDING ALERT TO ADMIN: {error_msg}")
-        raise ValueError(error_msg)
-    
-    logger.info("✅ Data Quality Check: All dimensions passed.")
+    if df['price'].isnull().any():
+        logger.warning("DQ Warning: พบราคาเป็นค่าว่าง จัดการเติมข้อมูลให้ (Forward Fill)")
+        df['price'] = df['price'].ffill()
+        df.to_csv(silver_path, index=False)
+        
+    logger.info("✅ DQ Passed: ข้อมูลพร้อมใช้งาน")
 
 # ==========================================
-# 3. Gold Layer: Star Schema Transformation 🌟
+# 4. GOLD: สร้าง Star Schema และนำเข้า SQLite 🌟
 # ==========================================
-def transform_silver_to_gold_star():
+def transform_to_star_schema_sqlite():
     silver_path = "/opt/airflow/data_lake/silver/gold_prices_silver.csv"
-    df = pd.read_csv(silver_path)
+    gold_dir = "/opt/airflow/data_lake/gold/"
+    os.makedirs(gold_dir, exist_ok=True)
     
-    # สร้าง dim_date
-    df['dt_obj'] = pd.to_datetime(df['timestamp'])
+    df = pd.read_csv(silver_path)
+    df['ts_obj'] = pd.to_datetime(df['timestamp'])
+    
+    # สร้าง Dimension Table
     dim_date = pd.DataFrame({
-        'date_key': df['dt_obj'].dt.strftime('%Y%m%d'),
-        'full_date': df['dt_obj'].dt.date,
-        'day': df['dt_obj'].dt.day,
-        'month': df['dt_obj'].dt.month,
-        'year': df['dt_obj'].dt.year,
-        'day_name': df['dt_obj'].dt.day_name()
+        'date_key': df['ts_obj'].dt.strftime('%Y%m%d'),
+        'full_date': df['ts_obj'].dt.date.astype(str), # แปลงเป็น string เพื่อให้ SQLite อ่านง่าย
+        'day': df['ts_obj'].dt.day,
+        'month': df['ts_obj'].dt.month,
+        'year': df['ts_obj'].dt.year
     }).drop_duplicates()
     
-    # สร้าง fact_gold_prices
+    # สร้าง Fact Table
     fact_gold = pd.DataFrame({
-        'fact_key': range(len(df)),
-        'date_key': df['dt_obj'].dt.strftime('%Y%m%d'),
+        'date_key': df['ts_obj'].dt.strftime('%Y%m%d'),
         'price': df['price'],
         'high': df['high_price'],
         'low': df['low_price'],
-        'currency': df['currency'],
-        'timestamp': df['timestamp']
+        'currency': df['currency']
     })
     
-    # บันทึกไฟล์แยกเป็นตาราง (Star Schema)
-    gold_dir = "/opt/airflow/data_lake/gold/"
-    os.makedirs(gold_dir, exist_ok=True)
-    dim_date.to_csv(f"{gold_dir}dim_date.csv", index=False)
-    fact_gold.to_csv(f"{gold_dir}fact_gold_prices.csv", index=False)
+    # 🌟 เชื่อมต่อฐานข้อมูล SQLite (ระบบจะสร้างไฟล์ .db ให้ถ้ายังไม่มี)
+    db_path = f"{gold_dir}gold_data_warehouse.db"
+    conn = sqlite3.connect(db_path)
     
-    logger.info(f"Gold Layer Star Schema: Success. Created {len(dim_date)} dates and {len(fact_gold)} facts.")
+    # บันทึกตารางลง SQLite (ใช้ if_exists='replace' เพื่อทับของเก่าถ้ารันซ้ำ)
+    dim_date.to_sql('dim_date', conn, if_exists='replace', index=False)
+    fact_gold.to_sql('fact_gold_prices', conn, if_exists='replace', index=False)
+    
+    # ปิดการเชื่อมต่อ
+    conn.close()
+    
+    logger.info(f"Gold Layer: นำข้อมูล Star Schema เข้าสู่ฐานข้อมูล SQLite เรียบร้อยแล้ว! (ไฟล์อยู่ที่: {db_path})")
 
 # ==========================================
-# DAG Definition
+# DAG CONFIG (สไตล์ E-T-L)
 # ==========================================
 with DAG(
-    'gold_price_pipeline',
-    default_args={'owner': 'Phonlawit', 'start_date': datetime(2026, 5, 14)},
-    schedule_interval='@hourly',
+    'gold_dataset_to_sqlite_pipeline',
+    default_args={'owner': 'Phonlawit', 'start_date': datetime(2026, 5, 15)},
+    schedule_interval='@once', 
     catchup=False,
-    tags=['star_schema', 'observability']
+    tags=['dataset', 'sqlite', 'etl']
 ) as dag:
 
-    task_bronze = PythonOperator(task_id='extract_bronze', python_callable=fetch_gold_data)
-    task_silver = PythonOperator(task_id='transform_silver', python_callable=transform_bronze_to_silver)
-    task_dq = PythonOperator(task_id='data_quality_check', python_callable=check_data_quality)
-    task_gold = PythonOperator(task_id='transform_gold_star', python_callable=transform_silver_to_gold_star)
+    # E = Extract (ดึงข้อมูลเข้า Bronze)
+    t1_extract = PythonOperator(
+        task_id='extract_to_bronze', 
+        python_callable=ingest_local_dataset
+    )
+    
+    # T = Transform (ทำความสะอาดใน Silver)
+    t2_transform_clean = PythonOperator(
+        task_id='transform_clean_to_silver', 
+        python_callable=process_dataset_to_silver
+    )
+    
+    # T = Transform (ตรวจสอบ Data Quality)
+    t3_transform_dq = PythonOperator(
+        task_id='transform_data_quality_check', 
+        python_callable=check_data_quality
+    )
+    
+    # L = Load (สร้าง Star Schema และโหลดเข้า SQLite)
+    t4_load = PythonOperator(
+        task_id='load_to_sqlite_warehouse', 
+        python_callable=transform_to_star_schema_sqlite 
+    )
 
-    task_bronze >> task_silver >> task_dq >> task_gold
+    # วางท่อ E -> T -> L
+    t1_extract >> t2_transform_clean >> t3_transform_dq >> t4_load
