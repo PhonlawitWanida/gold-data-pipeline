@@ -31,6 +31,10 @@
 > `Landing Zone (Raw CSV)` ➔ `Bronze Layer (Backup)` ➔ `Silver Layer (Cleaned & DQ Checked)` ➔ `Gold Layer (Star Schema in SQLite)`
 <img width="1205" height="192" alt="Screenshot 2026-05-16 091628" src="https://github.com/user-attachments/assets/40faaae1-68e5-4dba-af30-9b0d88bc5e8c" />
 
+**Data Architecture Pipeline**
+
+<img width="3477" height="7407" alt="Gold Data Transformation-2026-05-16-030435" src="https://github.com/user-attachments/assets/05bdcd43-73d7-49cd-8285-2f5508946415" />
+
 ## 4. โครงสร้างของโปรเจกต์ (Project Directory)
 ```text
 gold-price-pipeline/
